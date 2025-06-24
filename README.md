@@ -2,7 +2,11 @@
 
 > **Yapay Zeka Destekli YouTube Video Analizi ve Profesyonel Özetleme Sistemi**
 
+[![🚀 Live Demo](https://img.shields.io/badge/🚀%20Live%20Demo-yeb--youtube--tool.streamlit.app-FF4B4B?style=for-the-badge&logo=streamlit&logoColor=white)](https://yeb-youtube-tool.streamlit.app/)
+
 YEB AI YouTube Özetleyici, YouTube videolarından otomatik transkript çıkarma ve yapay zeka destekli profesyonel özetleme sunan gelişmiş bir web uygulamasıdır. OpenAI Whisper ve Google Gemini 1.5 Flash teknolojilerini birleştirerek, video içeriklerini detaylı analizler ve uygulanabilir özetler haline getirir.
+
+**🌐 [Canlı Uygulamayı Deneyin](https://yeb-youtube-tool.streamlit.app/)**
 
 ## ✨ Özellikler
 
@@ -35,7 +39,25 @@ YEB AI YouTube Özetleyici, YouTube videolarından otomatik transkript çıkarma
 
 ## 🚀 Hızlı Başlangıç
 
-### Gereksinimler
+### 🌐 Online Kullanım (Önerilen)
+
+**Hiçbir kurulum yapmadan hemen deneyin:**
+
+👉 **[https://yeb-youtube-tool.streamlit.app/](https://yeb-youtube-tool.streamlit.app/)**
+
+- Anında kullanıma hazır
+- Kurulum gerektirmez
+- Tüm özellikler aktif
+- AI özet için kendi Gemini API anahtarınızı ekleyin
+
+### 💻 Yerel Kurulum
+
+#### Gereksinimler
+- Python 3.8+
+- FFmpeg
+- Gemini API Anahtarı (AI özet için)
+
+#### Kurulum Adımları
 - Python 3.8+
 - FFmpeg
 - Gemini API Anahtarı (AI özet için)
@@ -208,6 +230,10 @@ yeb-youtube-tools/
 
 ### Streamlit Community Cloud
 
+**Canlı versiyon zaten yayında:** [https://yeb-youtube-tool.streamlit.app/](https://yeb-youtube-tool.streamlit.app/)
+
+Kendi versiyonunuzu deploy etmek için:
+
 1. **GitHub'a repository'yi push edin**
 2. **[Streamlit Community Cloud](https://streamlit.io/cloud)'a gidin**
 3. **Repository'yi bağlayın**
@@ -372,7 +398,8 @@ A: Daha küçük model (tiny/base) ve kısa chunk süresi (0.5-1dk) deneyin.
 [![Python](https://img.shields.io/badge/Python-3.8+-blue.svg)](https://python.org)
 [![Streamlit](https://img.shields.io/badge/Streamlit-1.32+-red.svg)](https://streamlit.io)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Live Demo](https://img.shields.io/badge/🌐%20Live%20Demo-Available-brightgreen.svg)](https://yeb-youtube-tool.streamlit.app/)
 
-Made with ❤️ by [Baran Can ERCAN](https://github.com/barancanercan)
+**[🌐 Canlı Uygulamayı Kullan](https://yeb-youtube-tool.streamlit.app/) • Made with ❤️ by [Baran Can ERCAN](https://github.com/barancanercan)**
 
 </div>
