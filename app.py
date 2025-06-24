@@ -138,19 +138,40 @@ def download_audio(url, temp_dir):
         'outtmpl': output_path,
         'noplaylist': True,
         'quiet': True,
+        'no_warnings': True,
+        'extractaudio': True,
+        'audioformat': 'mp3',
+        'audioquality': '192K',
         'postprocessors': [{
             'key': 'FFmpegExtractAudio',
             'preferredcodec': 'mp3',
             'preferredquality': '192',
         }],
+        # Anti-bot önlemleri
+        'extractor_retries': 3,
+        'fragment_retries': 3,
+        'retries': 3,
+        'http_headers': {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        }
     }
     
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        info = ydl.extract_info(url, download=True)
-        if 'requested_downloads' in info:
-            return info['requested_downloads'][0]['filepath']
-        else:
-            return os.path.join(temp_dir, "audio.mp3")
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=True)
+            if 'requested_downloads' in info:
+                return info['requested_downloads'][0]['filepath']
+            else:
+                return os.path.join(temp_dir, "audio.mp3")
+    except Exception as e:
+        # Fallback: farklı format dene
+        ydl_opts['format'] = 'worst'
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=True)
+            if 'requested_downloads' in info:
+                return info['requested_downloads'][0]['filepath']
+            else:
+                return os.path.join(temp_dir, "audio.mp3")
 
 def transcribe_audio(audio_path, model_name, language):
     """Ses dosyasını metne çevir"""
@@ -420,6 +441,5 @@ st.markdown("""
 <div style='text-align:center; color: #718096; font-size: 0.9rem; padding: 2rem 0;'>
     🤖 <strong>Powered by</strong> OpenAI Whisper • Google Gemini 1.5 Flash<br>
     <em>Profesyonel Video Analizi Sistemi</em>
-    <em>Created by Baran Can Ercan</em>
 </div>
 """, unsafe_allow_html=True)
