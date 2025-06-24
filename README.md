@@ -34,8 +34,8 @@ YEB AI YouTube Özetleyici, YouTube videolarından otomatik transkript çıkarma
 
 1. **Depoyu klonlayın:**
    ```bash
-   git clone https://github.com/your-username/yeb-ai-youtube-summarizer.git
-   cd yeb-ai-youtube-summarizer
+   git clone https://github.com/barancanercan/yeb-youtube-tools.git
+   cd yeb-youtube-tools
    ```
 
 2. **Sanal ortam oluşturun:**
@@ -146,15 +146,13 @@ YouTube URL → yt-dlp → Audio Extract → Whisper → Transcript
 ## 📁 Proje Yapısı
 
 ```
-yeb-ai-youtube-summarizer/
+yeb-youtube-tools/
 ├── app.py                  # Ana uygulama
 ├── requirements.txt        # Python bağımlılıkları
 ├── packages.txt           # Sistem bağımlılıkları
 ├── .env.example          # Environment dosyası örneği
 ├── .gitignore            # Git ignore kuralları
-├── README.md             # Bu dosya
-└── .streamlit/           # Streamlit yapılandırması
-    └── config.toml
+└── README.md             # Bu dosya
 ```
 
 ## 🚢 Deployment
@@ -180,14 +178,6 @@ EXPOSE 8501
 CMD ["streamlit", "run", "app.py"]
 ```
 
-### Heroku
-```bash
-# Heroku CLI ile
-heroku create your-app-name
-heroku config:set GEMINI_API_KEY=your-key
-git push heroku main
-```
-
 ## 🤝 Katkıda Bulunma
 
 Katkılarınızı memnuniyetle karşılıyoruz! 
@@ -197,18 +187,6 @@ Katkılarınızı memnuniyetle karşılıyoruz!
 3. Commit edin (`git commit -m 'Add amazing feature'`)
 4. Push edin (`git push origin feature/amazing-feature`)
 5. Pull Request açın
-
-### Geliştirme Ortamı
-```bash
-# Development bağımlılıklarını yükleyin
-pip install -r requirements-dev.txt
-
-# Pre-commit hook'ları kurun
-pre-commit install
-
-# Testleri çalıştırın
-pytest tests/
-```
 
 ## 📄 Lisans
 
@@ -228,18 +206,11 @@ A: FFmpeg'i sisteminize kurun. [FFmpeg İndirme Sayfası](https://ffmpeg.org/dow
 A: API anahtarınızın doğru olduğundan ve aktif olduğundan emin olun.
 
 ### İletişim
-- **E-posta**: support@yeb.ai
-- **GitHub Issues**: [Issues Sayfası](https://github.com/your-username/yeb-ai-youtube-summarizer/issues)
-- **Dokümantasyon**: [Wiki](https://github.com/your-username/yeb-ai-youtube-summarizer/wiki)
+- **GitHub**: [@barancanercan](https://github.com/barancanercan)
+- **Issues**: [GitHub Issues](https://github.com/barancanercan/yeb-youtube-tools/issues)
+- **E-posta**: İletişim için GitHub profilini ziyaret edin
 
-## 🏆 Başarılar
-
-- ✅ 5+ dil desteği
-- ✅ Sub-second latency
-- ✅ 99.9% uptime
-- ✅ 10,000+ successful analyses
-
-## 🔮 Roadmap
+## 🔮 Gelecek Planları
 
 ### v2.0 (Yakında)
 - [ ] Batch processing desteği
@@ -260,6 +231,6 @@ A: API anahtarınızın doğru olduğundan ve aktif olduğundan emin olun.
 
 *Profesyonel Video Analizi ve İçerik Özetleme Sistemi*
 
-Made with ❤️ by YEB AI Team (Baran Can ERCAN)
+Made with ❤️ by [Baran Can ERCAN](https://github.com/barancanercan)
 
 </div>
