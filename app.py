@@ -7,6 +7,10 @@ import shutil
 import subprocess
 import google.generativeai as genai
 from datetime import datetime
+import concurrent.futures
+from pydub import AudioSegment
+import threading
+import time
 
 # .env dosyasını manuel olarak oku
 def load_env_file():
@@ -21,8 +25,9 @@ def load_env_file():
         pass
 
 # Gemini API yapılandırması
+@st.cache_resource
 def configure_gemini():
-    """Gemini API'yi yapılandır"""
+    """Gemini API'yi yapılandır - Cache'lenir"""
     # Önce .env dosyasını yükle
     load_env_file()
     
@@ -35,6 +40,12 @@ def configure_gemini():
         return genai.GenerativeModel('gemini-1.5-flash')
     except Exception:
         return None
+
+# Whisper modelini cache'le
+@st.cache_resource
+def load_whisper_model(model_name):
+    """Whisper modelini yükle ve cache'le"""
+    return whisper.load_model(model_name)
 
 def create_summary_prompt(transcript, video_title=""):
     """Profesyonel özet için prompt oluştur"""
@@ -107,8 +118,9 @@ def analyze_transcript_with_gemini(model, transcript, video_title=""):
     except Exception as e:
         return f"Gemini API hatası: {str(e)}"
 
+@st.cache_data
 def get_video_info(url):
-    """Video başlığı ve meta bilgileri al"""
+    """Video başlığı ve meta bilgileri al - Cache'lenir"""
     try:
         ydl_opts = {'quiet': True, 'no_warnings': True}
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -121,8 +133,9 @@ def get_video_info(url):
     except Exception:
         return {}
 
+@st.cache_resource
 def check_ffmpeg():
-    """FFmpeg kontrolü"""
+    """FFmpeg kontrolü - Cache'lenir"""
     try:
         subprocess.run(["ffmpeg", "-version"], check=True, 
                       stdout=subprocess.PIPE, stderr=subprocess.PIPE)
@@ -131,26 +144,26 @@ def check_ffmpeg():
         return False, f"FFmpeg eksik: {e}"
 
 def download_audio(url, temp_dir):
-    """Video sesini indir"""
+    """Video sesini indir - Optimize edildi"""
     output_path = os.path.join(temp_dir, "audio.%(ext)s")
     ydl_opts = {
-        'format': 'bestaudio/best',
+        'format': 'bestaudio[filesize<50M]/bestaudio/best[filesize<50M]',  # Dosya boyutu sınırı
         'outtmpl': output_path,
         'noplaylist': True,
         'quiet': True,
         'no_warnings': True,
         'extractaudio': True,
         'audioformat': 'mp3',
-        'audioquality': '192K',
+        'audioquality': '5',  # Daha düşük kalite, daha hızlı
         'postprocessors': [{
             'key': 'FFmpegExtractAudio',
             'preferredcodec': 'mp3',
-            'preferredquality': '192',
+            'preferredquality': '128',  # Düşük kalite
         }],
-        # Anti-bot önlemleri
-        'extractor_retries': 3,
-        'fragment_retries': 3,
-        'retries': 3,
+        # Hız optimizasyonları
+        'extractor_retries': 1,
+        'fragment_retries': 1,
+        'retries': 1,
         'http_headers': {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
         }
@@ -164,7 +177,7 @@ def download_audio(url, temp_dir):
             else:
                 return os.path.join(temp_dir, "audio.mp3")
     except Exception as e:
-        # Fallback: farklı format dene
+        # Fallback: en düşük kalite
         ydl_opts['format'] = 'worst'
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=True)
@@ -173,11 +186,170 @@ def download_audio(url, temp_dir):
             else:
                 return os.path.join(temp_dir, "audio.mp3")
 
-def transcribe_audio(audio_path, model_name, language):
-    """Ses dosyasını metne çevir"""
-    model = whisper.load_model(model_name)
-    result = model.transcribe(audio_path, language=language)
-    return result['text']
+def split_audio_into_chunks(audio_path, chunk_length_ms=60000):
+    """Ses dosyasını parçalara böl - varsayılan 1 dakika"""
+    try:
+        audio = AudioSegment.from_file(audio_path)
+        chunks = []
+        
+        # Ses dosyası kısa ise bölmeye gerek yok
+        if len(audio) <= chunk_length_ms:
+            return [audio_path]
+        
+        temp_dir = os.path.dirname(audio_path)
+        chunk_paths = []
+        
+        for i, chunk_start in enumerate(range(0, len(audio), chunk_length_ms)):
+            chunk_end = min(chunk_start + chunk_length_ms, len(audio))
+            chunk = audio[chunk_start:chunk_end]
+            
+            chunk_path = os.path.join(temp_dir, f"chunk_{i:03d}.mp3")
+            chunk.export(chunk_path, format="mp3")
+            chunk_paths.append((chunk_path, chunk_start / 1000))  # saniye cinsinden başlangıç zamanı
+            
+        return chunk_paths
+    except Exception as e:
+        st.warning(f"Ses dosyası bölünemiyor, tek parça işlenecek: {e}")
+        return [audio_path]
+
+def transcribe_chunk(chunk_info, model_name, language):
+    """Tek bir ses parçasını metne çevir - Thread-safe"""
+    chunk_path, start_time = chunk_info
+    try:
+        # Her thread kendi modelini yükler (thread-safe)
+        import whisper
+        model = whisper.load_model(model_name)
+        
+        result = model.transcribe(
+            chunk_path,
+            language=language,
+            fp16=False,
+            verbose=False,
+            beam_size=1,
+            best_of=1,
+        )
+        # Model'i memory'den temizle
+        del model
+        return (start_time, result['text'])
+    except Exception as e:
+        return (start_time, f"[Hata: {str(e)}]")
+
+def transcribe_audio_parallel(audio_path, model_name, language, chunk_length_minutes=1):
+    """Ses dosyasını paralel olarak metne çevir - İyileştirilmiş versiyon"""
+    chunk_length_ms = chunk_length_minutes * 60 * 1000
+    
+    # Progress container oluştur
+    progress_container = st.empty()
+    status_container = st.empty()
+    
+    # Ses dosyasını parçalara böl
+    with progress_container:
+        progress_bar = st.progress(0, text="🔪 Ses dosyası parçalanıyor...")
+    
+    chunk_paths = split_audio_into_chunks(audio_path, chunk_length_ms)
+    
+    if isinstance(chunk_paths[0], str):  # Tek dosya
+        with progress_container:
+            progress_bar = st.progress(50, text="📝 Transkripsiyon yapılıyor...")
+        
+        import whisper
+        model = whisper.load_model(model_name)
+        result = model.transcribe(
+            audio_path,
+            language=language,
+            fp16=False,
+            verbose=False,
+            beam_size=1,
+            best_of=1,
+        )
+        
+        with progress_container:
+            progress_bar = st.progress(100, text="✅ Tamamlandı!")
+        
+        progress_container.empty()
+        return result['text']
+    
+    # Paralel işleme için optimum thread sayısı
+    max_workers = min(3, len(chunk_paths), os.cpu_count() or 1)
+    
+    with status_container:
+        st.info(f"🚀 {len(chunk_paths)} parça, {max_workers} thread ile işleniyor...")
+    
+    with progress_container:
+        progress_bar = st.progress(25, text=f"🚀 Paralel işleme başlatılıyor...")
+    
+    transcriptions = []
+    completed_chunks = []
+    
+    # Process tracking için
+    import queue
+    result_queue = queue.Queue()
+    
+    def worker_with_queue(chunk_info):
+        """Worker function that puts results in queue"""
+        result = transcribe_chunk(chunk_info, model_name, language)
+        result_queue.put(result)
+        return result
+    
+    # ThreadPoolExecutor ile paralel işleme
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+        # İşleri başlat
+        futures = []
+        for chunk_info in chunk_paths:
+            future = executor.submit(worker_with_queue, chunk_info)
+            futures.append(future)
+        
+        # Sonuçları topla
+        completed = 0
+        for future in concurrent.futures.as_completed(futures):
+            try:
+                start_time, text = future.result()
+                transcriptions.append((start_time, text))
+                completed += 1
+                
+                # Progress güncelle
+                progress = 25 + (completed / len(chunk_paths)) * 65
+                with progress_container:
+                    progress_bar = st.progress(
+                        int(progress), 
+                        text=f"📝 {completed}/{len(chunk_paths)} parça tamamlandı..."
+                    )
+                
+            except Exception as e:
+                completed += 1
+                transcriptions.append((0, f"[İşleme hatası: {str(e)}]"))
+                with progress_container:
+                    progress_bar = st.progress(
+                        int(25 + (completed / len(chunk_paths)) * 65), 
+                        text=f"⚠️ {completed}/{len(chunk_paths)} parça işlendi (bazı hatalar var)..."
+                    )
+    
+    # Parçaları zamana göre sırala ve birleştir
+    with progress_container:
+        progress_bar = st.progress(95, text="🔗 Parçalar birleştiriliyor...")
+    
+    transcriptions.sort(key=lambda x: x[0])  # Zamana göre sırala
+    
+    # Metinleri birleştir
+    full_transcript = " ".join([text.strip() for _, text in transcriptions if text.strip()])
+    
+    # Geçici chunk dosyalarını temizle
+    for chunk_path, _ in chunk_paths:
+        try:
+            if os.path.exists(chunk_path):
+                os.remove(chunk_path)
+        except:
+            pass
+    
+    with progress_container:
+        progress_bar = st.progress(100, text="✅ Transkripsiyon tamamlandı!")
+    
+    # Containers'ı temizle
+    time.sleep(1)
+    progress_container.empty()
+    status_container.empty()
+    
+    return full_transcript
 
 # Streamlit sayfa ayarları
 st.set_page_config(
@@ -186,6 +358,14 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="collapsed"
 )
+
+# Session state başlatma
+if 'transcript' not in st.session_state:
+    st.session_state.transcript = ""
+if 'ai_summary' not in st.session_state:
+    st.session_state.ai_summary = ""
+if 'video_info' not in st.session_state:
+    st.session_state.video_info = {}
 
 # Siyah tema CSS
 st.markdown("""
@@ -274,6 +454,7 @@ st.markdown("""
         border-radius: 8px;
         padding: 0.5rem 1rem;
         width: 100%;
+        margin: 0.25rem 0;
     }
     
     .info-card {
@@ -304,6 +485,21 @@ st.markdown("""
         font-size: 0.9rem;
         margin: 0.5rem 0;
     }
+    
+    .stRadio > div {
+        background-color: #2d3748;
+        padding: 1rem;
+        border-radius: 8px;
+        border: 1px solid #4a5568;
+    }
+    
+    .option-container {
+        background-color: #1a202c;
+        padding: 1.5rem;
+        border-radius: 10px;
+        margin: 1rem 0;
+        border: 1px solid #4a5568;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -329,8 +525,8 @@ video_url = st.text_input(
     help="YouTube video linkini buraya yapıştırın"
 )
 
-# Ayarlar
-col1, col2, col3 = st.columns(3)
+# Ayarlar bölümü
+col1, col2 = st.columns(2)
 
 with col1:
     language = st.selectbox(
@@ -341,26 +537,59 @@ with col1:
 
 with col2:
     model_name = st.selectbox(
-        "🧠 Model",
+        "🧠 Whisper Model",
         ["tiny", "base", "small", "medium", "large"],
         index=1,
-        help="Tiny: Hızlı, Large: Daha doğru"
+        help="Tiny: En hızlı | Base: Önerilen | Large: En doğru"
     )
 
+# Paralel işleme ayarları
+st.markdown('<div class="option-container">', unsafe_allow_html=True)
+st.markdown("### ⚡ Hız Optimizasyonu")
+
+col3, col4 = st.columns(2)
 with col3:
-    create_summary = st.checkbox(
-        "🤖 AI Özet",
-        value=bool(gemini_model),
-        disabled=not bool(gemini_model),
-        help="Gemini ile akıllı özet oluştur"
+    chunk_length = st.selectbox(
+        "🔪 Parça Uzunluğu (dakika)",
+        [0.5, 1, 2, 3, 5],
+        index=1,
+        help="Kısa parçalar = Daha hızlı paralel işleme"
     )
 
+with col4:
+    use_parallel = st.checkbox(
+        "🚀 Paralel İşleme",
+        value=True,
+        help="Ses dosyasını parçalara bölüp paralel işler (Çok daha hızlı!)"
+    )
+
+st.markdown('</div>', unsafe_allow_html=True)
+
+# İşlem türü seçimi
+st.markdown('<div class="option-container">', unsafe_allow_html=True)
+st.markdown("### 🎯 İşlem Türü Seçin")
+
+process_type = st.radio(
+    "Ne yapmak istiyorsunuz?",
+    ["📝 Sadece Transkript", "🤖 Sadece AI Özet", "📝🤖 Hem Transkript Hem AI Özet"],
+    index=2 if gemini_model else 0,
+    help="Sadece ihtiyacınız olan işlemi seçerek süreyi kısaltabilirsiniz"
+)
+
+# AI özet için gerekli olan durumlarda Gemini kontrolü
+need_ai = "AI Özet" in process_type
+if need_ai and not gemini_model:
+    st.warning("⚠️ AI özet için Gemini API anahtarı gerekli. Sadece transkript modu kullanılacak.")
+    process_type = "📝 Sadece Transkript"
+
+st.markdown('</div>', unsafe_allow_html=True)
 st.markdown('</div>', unsafe_allow_html=True)
 
 # Video bilgilerini göster
 if video_url:
     with st.spinner("📹 Video bilgileri alınıyor..."):
         video_info = get_video_info(video_url)
+        st.session_state.video_info = video_info
         if video_info and video_info.get('title'):
             st.markdown(f"""
             <div class="info-card">
@@ -387,53 +616,121 @@ if st.button("🚀 Analizi Başlat", type="primary"):
             
             st.markdown('<div class="success-card">✅ Ses dosyası hazır!</div>', unsafe_allow_html=True)
 
-            # 2. Transkripsiyon
-            with st.spinner("🧠 Konuşma metne dönüştürülüyor..."):
-                transcript = transcribe_audio(audio_path, model_name, language_code)
-            
-            st.markdown('<div class="success-card">✅ Transkript oluşturuldu!</div>', unsafe_allow_html=True)
-
-            # 3. Sonuçları göster
-            col1, col2 = st.columns([1, 1])
-            
-            with col1:
-                st.markdown("### 📝 Ham Transkript")
-                st.text_area(
-                    "transcript_content",
-                    transcript,
-                    height=400,
-                    label_visibility="collapsed"
-                )
-                st.download_button(
-                    "📥 Transkripti İndir",
-                    data=transcript,
-                    file_name=f"transkript_{datetime.now().strftime('%Y%m%d_%H%M')}.txt",
-                    mime="text/plain"
-                )
-
-            with col2:
-                if create_summary and gemini_model:
-                    st.markdown("### 🤖 AI Özetleme")
-                    with st.spinner("🔮 AI özet hazırlanıyor..."):
-                        video_title = video_info.get('title', '') if video_info else ''
-                        summary = analyze_transcript_with_gemini(gemini_model, transcript, video_title)
-                    
-                    st.markdown(f'<div class="result-container">{summary}</div>', unsafe_allow_html=True)
-                    
-                    st.download_button(
-                        "📥 AI Özetini İndir",
-                        data=summary,
-                        file_name=f"ai_ozet_{datetime.now().strftime('%Y%m%d_%H%M')}.md",
-                        mime="text/markdown"
-                    )
+            # 2. Transkripsiyon (gerekirse)
+            if "Transkript" in process_type or "AI Özet" in process_type:
+                if use_parallel:
+                    st.info(f"🚀 Paralel işleme aktif - {chunk_length} dakikalık parçalar")
+                    transcript = transcribe_audio_parallel(audio_path, model_name, language_code, chunk_length)
                 else:
-                    st.markdown("### ℹ️ Bilgi")
-                    st.info("AI özet özelliği için Gemini API anahtarı gerekli.")
+                    with st.spinner("🧠 Konuşma metne dönüştürülüyor..."):
+                        model = load_whisper_model(model_name)
+                        result = model.transcribe(
+                            audio_path,
+                            language=language_code,
+                            fp16=False,
+                            verbose=False,
+                            beam_size=1,
+                            best_of=1,
+                        )
+                        transcript = result['text']
+                
+                st.session_state.transcript = transcript
+
+            # 3. AI özetleme (gerekirse)
+            if "AI Özet" in process_type and gemini_model:
+                with st.spinner("🔮 AI özet hazırlanıyor..."):
+                    video_title = st.session_state.video_info.get('title', '')
+                    summary = analyze_transcript_with_gemini(gemini_model, st.session_state.transcript, video_title)
+                    st.session_state.ai_summary = summary
+                
+                st.markdown('<div class="success-card">✅ AI özet hazır!</div>', unsafe_allow_html=True)
 
         except Exception as e:
             st.error(f"❌ Hata: {str(e)}")
         finally:
             shutil.rmtree(temp_dir, ignore_errors=True)
+
+# Sonuçları göster
+if st.session_state.transcript or st.session_state.ai_summary:
+    st.markdown("---")
+    st.markdown("## 📊 Sonuçlar")
+    
+    # Layout belirleme
+    show_transcript = st.session_state.transcript and ("Transkript" in process_type or not process_type)
+    show_summary = st.session_state.ai_summary and ("AI Özet" in process_type or not process_type)
+    
+    if show_transcript and show_summary:
+        col1, col2 = st.columns([1, 1])
+        
+        with col1:
+            st.markdown("### 📝 Ham Transkript")
+            st.text_area(
+                "transcript_content",
+                st.session_state.transcript,
+                height=400,
+                label_visibility="collapsed",
+                key="transcript_display"
+            )
+            st.download_button(
+                "📥 Transkripti İndir",
+                data=st.session_state.transcript,
+                file_name=f"transkript_{datetime.now().strftime('%Y%m%d_%H%M')}.txt",
+                mime="text/plain",
+                key="download_transcript"
+            )
+
+        with col2:
+            st.markdown("### 🤖 AI Özetleme")
+            st.markdown(f'<div class="result-container">{st.session_state.ai_summary}</div>', unsafe_allow_html=True)
+            
+            st.download_button(
+                "📥 AI Özetini İndir",
+                data=st.session_state.ai_summary,
+                file_name=f"ai_ozet_{datetime.now().strftime('%Y%m%d_%H%M')}.md",
+                mime="text/markdown",
+                key="download_summary"
+            )
+    
+    elif show_transcript:
+        st.markdown("### 📝 Ham Transkript")
+        st.text_area(
+            "transcript_content",
+            st.session_state.transcript,
+            height=400,
+            label_visibility="collapsed",
+            key="transcript_display_full"
+        )
+        col1, col2 = st.columns([1, 3])
+        with col1:
+            st.download_button(
+                "📥 Transkripti İndir",
+                data=st.session_state.transcript,
+                file_name=f"transkript_{datetime.now().strftime('%Y%m%d_%H%M')}.txt",
+                mime="text/plain",
+                key="download_transcript_only"
+            )
+    
+    elif show_summary:
+        st.markdown("### 🤖 AI Özetleme")
+        st.markdown(f'<div class="result-container">{st.session_state.ai_summary}</div>', unsafe_allow_html=True)
+        
+        col1, col2 = st.columns([1, 3])
+        with col1:
+            st.download_button(
+                "📥 AI Özetini İndir",
+                data=st.session_state.ai_summary,
+                file_name=f"ai_ozet_{datetime.now().strftime('%Y%m%d_%H%M')}.md",
+                mime="text/markdown",
+                key="download_summary_only"
+            )
+
+# Temizleme butonu
+if st.session_state.transcript or st.session_state.ai_summary:
+    if st.button("🧹 Sonuçları Temizle"):
+        st.session_state.transcript = ""
+        st.session_state.ai_summary = ""
+        st.session_state.video_info = {}
+        st.rerun()
 
 # Alt bilgi
 st.markdown("""

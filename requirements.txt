@@ -1,6 +1,6 @@
-streamlit
-yt-dlp
+streamlit>=1.32.0
+yt-dlp>=2024.3.10
 openai-whisper>=20231117
-ffmpeg-python
-google-generativeai
-python-dotenv
+ffmpeg-python>=0.2.0
+google-generativeai>=0.4.0
+pydub>=0.25.1
